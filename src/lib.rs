@@ -87,6 +87,8 @@ cfg_if! {
         pub use linux::*;
     } else if #[cfg(target_os = "windows")] {
         pub use windows::*;
+    } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
+        pub use apple::*;
     } else {
         pub use default::*;
     }
@@ -353,6 +355,52 @@ mod windows {
     pub fn heavy() {
         unsafe {
             windows_sys::Win32::System::Threading::FlushProcessWriteBuffers();
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+mod apple {
+    use core::sync::atomic;
+
+    /// Include Raw FFI of `is_supported` and `flush_process_write_buffers`
+    /// which are implemented on `apple/barrier.h`.
+    mod barrier {
+        include!(concat!(env!("OUT_DIR"), "/barrier.rs"));
+    }
+
+    /// Issues a light memory barrier for fast path.
+    ///
+    /// It issues a compiler fence, which disallows compiler optimizations across itself. It incurs
+    /// basically no costs in run-time.
+    #[inline]
+    pub fn light() {
+        // NOTE: `is_supported()` simply returns an integer value
+        // without any overheads.
+        if unsafe { barrier::is_supported() } > 0 {
+            atomic::compiler_fence(atomic::Ordering::SeqCst);
+        } else {
+            atomic::fence(atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Issues heavy memory barrier for slow path.
+    ///
+    /// It flushes write buffers of executing threads of the current process
+    /// by Inter Process Interrupt(IPI) mechanism.
+    ///
+    /// In the latest version of MacOS(at least 10.14) and iOS(at least 12),
+    /// it requests the threads pointer values to force the thread to emit a
+    /// memory barrier. In older versions, it falls back to the `thread_get_state`
+    /// -based method.
+    #[inline]
+    pub fn heavy() {
+        // NOTE: `is_supported()` simply returns an integer value
+        // without any overheads.
+        if unsafe { barrier::is_supported() } > 0 {
+            unsafe { barrier::flush_process_write_buffers() };
+        } else {
+            atomic::fence(atomic::Ordering::SeqCst);
         }
     }
 }

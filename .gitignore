@@ -2,3 +2,6 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+
+apple/*.o
+apple/*.a
