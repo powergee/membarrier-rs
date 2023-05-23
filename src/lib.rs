@@ -117,87 +117,42 @@ mod default {
 mod linux {
     use core::sync::atomic;
 
-    /// A choice between three strategies for process-wide barrier on Linux.
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum Strategy {
-        /// Use the `membarrier` system call.
-        Membarrier,
-        /// Use the `mprotect`-based trick.
-        Mprotect,
-        /// Use `SeqCst` fences.
-        Fallback,
-    }
-
-    lazy_static! {
-        /// The right strategy to use on the current machine.
-        static ref STRATEGY: Strategy = {
-            if membarrier::is_supported() {
-                Strategy::Membarrier
-            } else if mprotect::is_supported() {
-                Strategy::Mprotect
-            } else {
-                Strategy::Fallback
-            }
-        };
-    }
-
+    #[cfg(membarrier_cfg)]
     mod membarrier {
-        /// Commands for the membarrier system call.
-        ///
-        /// # Caveat
-        ///
-        /// We're defining it here because, unfortunately, the `libc` crate currently doesn't
-        /// expose `membarrier_cmd` for us. You can find the numbers in the [Linux source
-        /// code](https://github.com/torvalds/linux/blob/master/include/uapi/linux/membarrier.h).
-        ///
-        /// This enum should really be `#[repr(libc::c_int)]`, but Rust currently doesn't allow it.
-        #[repr(i32)]
-        #[allow(dead_code, non_camel_case_types)]
-        enum membarrier_cmd {
-            MEMBARRIER_CMD_QUERY = 0,
-            MEMBARRIER_CMD_GLOBAL = (1 << 0),
-            MEMBARRIER_CMD_GLOBAL_EXPEDITED = (1 << 1),
-            MEMBARRIER_CMD_REGISTER_GLOBAL_EXPEDITED = (1 << 2),
-            MEMBARRIER_CMD_PRIVATE_EXPEDITED = (1 << 3),
-            MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED = (1 << 4),
-            MEMBARRIER_CMD_PRIVATE_EXPEDITED_SYNC_CORE = (1 << 5),
-            MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED_SYNC_CORE = (1 << 6),
-        }
-
         /// Call the `sys_membarrier` system call.
         #[inline]
-        fn sys_membarrier(cmd: membarrier_cmd) -> libc::c_long {
-            unsafe { libc::syscall(libc::SYS_membarrier, cmd as libc::c_int, 0 as libc::c_int) }
+        fn sys_membarrier(cmd: libc::c_int) -> libc::c_long {
+            unsafe { libc::syscall(libc::SYS_membarrier, cmd, 0 as libc::c_int) }
         }
 
-        /// Returns `true` if the `sys_membarrier` call is available.
-        pub fn is_supported() -> bool {
-            // Queries which membarrier commands are supported. Checks if private expedited
-            // membarrier is supported.
-            let ret = sys_membarrier(membarrier_cmd::MEMBARRIER_CMD_QUERY);
-            if ret < 0
-                || ret & membarrier_cmd::MEMBARRIER_CMD_PRIVATE_EXPEDITED as libc::c_long == 0
-                || ret & membarrier_cmd::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED as libc::c_long
-                    == 0
-            {
-                return false;
-            }
+        struct Barrier {}
 
-            // Registers the current process as a user of private expedited membarrier.
-            if sys_membarrier(membarrier_cmd::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED) < 0 {
-                return false;
-            }
+        unsafe impl Sync for Barrier {}
 
-            true
+        impl Barrier {
+            /// Executes a heavy `sys_membarrier`-based barrier.
+            #[inline]
+            pub fn barrier(&self) {
+                fatal_assert!(sys_membarrier(libc::MEMBARRIER_CMD_PRIVATE_EXPEDITED) >= 0);
+            }
         }
 
-        /// Executes a heavy `sys_membarrier`-based barrier.
+        lazy_static! {
+            static ref BARRIER: Barrier = {
+                // Registers the current process as a user of private expedited membarrier.
+                fatal_assert!(sys_membarrier(libc::MEMBARRIER_CMD_REGISTER_PRIVATE_EXPEDITED) >= 0);
+                Barrier {}
+            };
+        }
+
+        /// Executes a heavy `mprotect`-based barrier.
         #[inline]
         pub fn barrier() {
-            fatal_assert!(sys_membarrier(membarrier_cmd::MEMBARRIER_CMD_PRIVATE_EXPEDITED) >= 0);
+            BARRIER.barrier();
         }
     }
 
+    #[cfg(mprotect_cfg)]
     mod mprotect {
         use core::{cell::UnsafeCell, mem::MaybeUninit, ptr, sync::atomic};
         use libc;
@@ -291,11 +246,6 @@ mod linux {
             };
         }
 
-        /// Returns `true` if the `mprotect`-based trick is supported.
-        pub fn is_supported() -> bool {
-            cfg!(target_arch = "x86") || cfg!(target_arch = "x86_64")
-        }
-
         /// Executes a heavy `mprotect`-based barrier.
         #[inline]
         pub fn barrier() {
@@ -310,10 +260,12 @@ mod linux {
     #[inline]
     #[allow(dead_code)]
     pub fn light() {
-        use self::Strategy::*;
-        match *STRATEGY {
-            Membarrier | Mprotect => atomic::compiler_fence(atomic::Ordering::SeqCst),
-            Fallback => atomic::fence(atomic::Ordering::SeqCst),
+        cfg_if! {
+            if #[cfg(any(membarrier_cfg, mprotect_cfg))] {
+                atomic::compiler_fence(atomic::Ordering::SeqCst);
+            } else {
+                atomic::fence(atomic::Ordering::SeqCst);
+            }
         }
     }
 
@@ -324,11 +276,14 @@ mod linux {
     #[inline]
     #[allow(dead_code)]
     pub fn heavy() {
-        use self::Strategy::*;
-        match *STRATEGY {
-            Membarrier => membarrier::barrier(),
-            Mprotect => mprotect::barrier(),
-            Fallback => atomic::fence(atomic::Ordering::SeqCst),
+        cfg_if! {
+            if #[cfg(membarrier_cfg)] {
+                membarrier::barrier();
+            } else if #[cfg(mprotect_cfg)] {
+                mprotect::barrier();
+            } else {
+                atomic::fence(atomic::Ordering::SeqCst);
+            }
         }
     }
 }
