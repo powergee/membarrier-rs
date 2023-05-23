@@ -363,10 +363,125 @@ mod windows {
 mod apple {
     use core::sync::atomic;
 
-    /// Include Raw FFI of `is_supported` and `flush_process_write_buffers`
-    /// which are implemented on `apple/barrier.h`.
     mod barrier {
-        include!(concat!(env!("OUT_DIR"), "/barrier.rs"));
+        #![allow(non_camel_case_types)]
+        #![allow(unused)]
+        #![allow(non_snake_case)]
+
+        use core::mem;
+        use core::slice;
+
+        use libc::{
+            mach_task_self, task_threads, thread_act_t, uintptr_t, vm_address_t, vm_deallocate,
+            KERN_SUCCESS,
+        };
+
+        // Include Raw FFI for `is_supported` and `flush_process_write_buffers`.
+        include!(concat!(env!("OUT_DIR"), "/mach.rs"));
+
+        /// Equivalent to `x86_THREAD_STATE64_COUNT` and `ARM_THREAD_STATE64_COUNT`
+        /// macros in `<mach/thread_status.h>`
+        const fn thread_state64_count() -> u32 {
+            cfg_if! {
+                if #[cfg(target_arch = "x86_64")] {
+                    (mem::size_of::<x86_thread_state64_t>() / mem::size_of::<u32>()) as u32
+                } else if #[cfg(target_arch = "aarch64")] {
+                    (mem::size_of::<arm_thread_state64_t>() / mem::size_of::<u32>()) as u32
+                } else {
+                    // This path should not be reachable!
+                    // Because we check if the heavy barrier is supported
+                    // by `is_supported` function before using `flush_process_write_buffers`.
+                    unreachable!()
+                }
+            }
+        }
+
+        /// Check if the heavy membarrier using an inter processor interrupt
+        /// mechanism is supported on the host environment.
+        ///
+        /// An inter processor interrupt mechanism on Apple environments
+        /// is implementable for only x64 and ARM64.
+        #[inline]
+        pub const fn is_supported() -> bool {
+            cfg_if! {
+                if #[cfg(any(target_arch = "aarch64", target_arch = "x86_64"))] {
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+
+        #[inline]
+        fn assert_success(ret: kern_return_t, err_msg: &'static str) {
+            if ret != KERN_SUCCESS as kern_return_t {
+                panic!("{}", err_msg);
+            }
+        }
+
+        /// Issue a heavy memory barrier.
+        ///
+        /// It flushes write buffers of executing threads of the current process,
+        /// and is equivalent to `membarrier` on latest Linux and `FlushProcessWriteBuffers` on Windows.
+        #[inline]
+        pub unsafe fn flush_process_write_buffers() {
+            let mut thread_count: mach_msg_type_number_t = mem::zeroed();
+            let mut thread_acts: *mut thread_act_t = mem::zeroed();
+
+            assert_success(
+                task_threads(mach_task_self(), &mut thread_acts, &mut thread_count),
+                "Failed to fetch thread information!",
+            );
+
+            let thread_acts_arr = slice::from_raw_parts_mut(thread_acts, thread_count as usize);
+            let mut sp = mem::zeroed();
+            let mut register_values: [uintptr_t; 128] = mem::zeroed();
+
+            for act in thread_acts_arr {
+                cfg_if! {
+                    if #[cfg(register_pointer_values)] {
+                        let mut registers = 128;
+                        assert_success(
+                            thread_get_register_pointer_values(*act, &mut sp, &mut registers, register_values.as_mut_ptr()),
+                            "`thread_get_register_pointer_values` system call failed!"
+                        );
+                    } else if #[cfg(target_arch = "x86_64")] {
+                        let mut thread_state: x86_thread_state64_t = mem::zeroed();
+                        let mut count = thread_state64_count();
+                        assert_success(
+                            thread_get_state(*act, x86_THREAD_STATE64 as i32, (&mut thread_state) as *mut _ as _, &mut count),
+                            "`thread_get_state` system call for x86 failed!"
+                        );
+                    } else if #[cfg(target_arch = "aarch64")] {
+                        let mut thread_state: arm_thread_state64_t = mem::zeroed();
+                        let mut count = thread_state64_count();
+                        assert_success(
+                            thread_get_state(*act, ARM_THREAD_STATE64 as i32, (&mut thread_state) as *mut _ as _, &mut count),
+                            "`thread_get_state` system call for AARCH64 failed!"
+                        );
+                    } else {
+                        // This path should not be reachable!
+                        // Because we check if the heavy barrier is supported
+                        // by `is_supported` function before using `flush_process_write_buffers`.
+                        unreachable!()
+                    }
+                };
+
+                assert_success(
+                    mach_port_deallocate(mach_task_self(), *act),
+                    "Failed to decrement the port right's reference count!",
+                );
+            }
+
+            assert_success(
+                vm_deallocate(
+                    mach_task_self(),
+                    thread_acts as vm_address_t,
+                    thread_count as usize * mem::size_of::<thread_act_t>(),
+                ),
+                "Failed to deallocate the used thread list!",
+            );
+        }
     }
 
     /// Issues a light memory barrier for fast path.
@@ -375,9 +490,7 @@ mod apple {
     /// basically no costs in run-time.
     #[inline]
     pub fn light() {
-        // NOTE: `is_supported()` simply returns an integer value
-        // without any overheads.
-        if unsafe { barrier::is_supported() } > 0 {
+        if barrier::is_supported() {
             atomic::compiler_fence(atomic::Ordering::SeqCst);
         } else {
             atomic::fence(atomic::Ordering::SeqCst);
@@ -395,9 +508,7 @@ mod apple {
     /// -based method.
     #[inline]
     pub fn heavy() {
-        // NOTE: `is_supported()` simply returns an integer value
-        // without any overheads.
-        if unsafe { barrier::is_supported() } > 0 {
+        if barrier::is_supported() {
             unsafe { barrier::flush_process_write_buffers() };
         } else {
             atomic::fence(atomic::Ordering::SeqCst);

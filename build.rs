@@ -1,56 +1,77 @@
+extern crate bindgen;
+extern crate cc;
+
+const ALLOWED_TYPES: [&'static str; 5] = [
+    "x86_unified_thread_state_t",
+    "arm_unified_thread_state_t",
+    "x86_thread_state64_t",
+    "arm_thread_state64_t",
+    "thread_state_t",
+];
+
+const ALLOWED_FUNCTIONS: [&'static str; 3] = [
+    "thread_get_register_pointer_values",
+    "thread_get_state",
+    "mach_port_deallocate",
+];
+
+const ALLOWED_CONSTANTS: [&'static str; 2] = ["x86_THREAD_STATE64", "ARM_THREAD_STATE64"];
+
 // Building custom barrier library must be conducted
 // only in MacOS-based systems.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn main() {
-    extern crate bindgen;
-    extern crate cc;
-
     use bindgen::CargoCallbacks;
-    use std::env;
     use std::path::PathBuf;
+    use std::{env, fs};
 
     let libdir_path = PathBuf::from("apple")
         // Canonicalize the path as `rustc-link-search` requires an absolute
         // path.
         .canonicalize()
         .expect("cannot canonicalize path");
+    let libdir_path_str = libdir_path.to_str().expect("Path is not a valid string");
 
-    let sources_path = libdir_path.join("barrier.c");
-    let headers_path = libdir_path.join("barrier.h");
+    let headers_path = libdir_path.join("mach.h");
     let headers_path_str = headers_path.to_str().expect("Path is not a valid string");
 
-    // Tell cargo to look for shared libraries in the specified directory
-    println!("cargo:rustc-link-search={}", libdir_path.to_str().unwrap());
-
-    // Tell cargo to tell rustc to link our `barrier` library. Cargo will
-    // automatically know it must look for a `libbarrier.a` file.
-    println!("cargo:rustc-link-lib=barrier");
-
     // Tell cargo to invalidate the built crate whenever the header changes.
-    println!("cargo:rerun-if-changed={}", headers_path_str);
-
-    cc::Build::new()
-        .file(&sources_path)
-        .opt_level(3)
-        .compile("barrier");
+    println!("cargo:rerun-if-changed={}", libdir_path_str);
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
-    let bindings = bindgen::Builder::default()
+    let mut builder = bindgen::Builder::default();
+
+    for t in ALLOWED_TYPES {
+        builder = builder.allowlist_type(t);
+    }
+    for f in ALLOWED_FUNCTIONS {
+        builder = builder.allowlist_function(f);
+    }
+    for c in ALLOWED_CONSTANTS {
+        builder = builder.allowlist_var(c);
+    }
+
+    let bindings = builder
         .use_core()
-        .allowlist_function("is_supported")
-        .allowlist_function("flush_process_write_buffers")
         .header(headers_path_str)
         .parse_callbacks(Box::new(CargoCallbacks))
         .generate()
         .expect("Unable to generate bindings");
 
-    // Write the bindings to the $OUT_DIR/barrier.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("barrier.rs");
+    // Write the bindings to the $OUT_DIR/mach.rs file.
+    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("mach.rs");
     bindings
-        .write_to_file(out_path)
+        .write_to_file(out_path.clone())
         .expect("Couldn't write bindings!");
+
+    let generated =
+        fs::read_to_string(out_path).expect("Couldn't read the generated binding file!");
+
+    if generated.contains("thread_get_register_pointer_values") {
+        println!("cargo:rustc-cfg=register_pointer_values");
+    }
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
