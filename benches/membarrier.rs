@@ -1,10 +1,10 @@
 #![feature(test)]
 
-extern crate test;
 extern crate membarrier;
+extern crate test;
 
-use test::Bencher;
 use std::sync::atomic::{fence, Ordering};
+use test::Bencher;
 
 #[bench]
 fn light(b: &mut Bencher) {

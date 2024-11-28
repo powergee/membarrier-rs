@@ -6,7 +6,7 @@ use core::sync::atomic::{fence, Ordering};
 
 #[test]
 fn fences() {
-    membarrier::light();     // light-weight barrier
+    membarrier::light(); // light-weight barrier
     fence(Ordering::SeqCst); // normal barrier
-    membarrier::heavy();     // heavy-weight barrier
+    membarrier::heavy(); // heavy-weight barrier
 }
