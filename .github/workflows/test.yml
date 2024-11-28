@@ -7,13 +7,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Rust nightly toolchain
-      uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: nightly
         components: rustfmt, clippy
+    - uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-audit
       run: cargo install cargo-audit
@@ -32,19 +31,18 @@ jobs:
         cargo test --release
 
     - name: Run benchs
-      run: cargo bench
+      run: cargo +nightly bench
 
   windows:
     runs-on: windows-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Rust nightly toolchain
-      uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: nightly
         components: rustfmt, clippy
+    - uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-audit
       run: cargo install cargo-audit
@@ -63,19 +61,18 @@ jobs:
         cargo test --release
 
     - name: Run benchs
-      run: cargo bench
+      run: cargo +nightly bench
 
   macos:
     runs-on: macos-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
-    - name: Install Rust nightly toolchain
-      uses: actions-rs/toolchain@v1
+    - uses: dtolnay/rust-toolchain@stable
       with:
-        toolchain: nightly
         components: rustfmt, clippy
+    - uses: Swatinem/rust-cache@v2
 
     - name: Install cargo-audit
       run: cargo install cargo-audit
@@ -94,4 +91,4 @@ jobs:
         cargo test --release
 
     - name: Run benchs
-      run: cargo bench
+      run: cargo +nightly bench
