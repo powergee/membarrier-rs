@@ -1,0 +1,97 @@
+name: Test Benchmark
+
+on: [push, pull_request]
+
+jobs:
+  ubuntu:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust nightly toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: rustfmt, clippy
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Check code formatting
+      run: cargo fmt -- --check
+
+    - name: Run checks
+      run: |
+        cargo check --verbose
+        cargo audit
+
+    - name: Run tests
+      run: |
+        cargo test
+        cargo test --release
+
+    - name: Run benchs
+      run: cargo bench
+
+  windows:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust nightly toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: rustfmt, clippy
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Check code formatting
+      run: cargo fmt -- --check
+
+    - name: Run checks
+      run: |
+        cargo check --verbose
+        cargo audit
+
+    - name: Run tests
+      run: |
+        cargo test
+        cargo test --release
+
+    - name: Run benchs
+      run: cargo bench
+
+  macos:
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust nightly toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: nightly
+        components: rustfmt, clippy
+
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+
+    - name: Check code formatting
+      run: cargo fmt -- --check
+
+    - name: Run checks
+      run: |
+        cargo check --verbose
+        cargo audit
+
+    - name: Run tests
+      run: |
+        cargo test
+        cargo test --release
+
+    - name: Run benchs
+      run: cargo bench
