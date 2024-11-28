@@ -1,11 +1,10 @@
-extern crate bindgen;
-
-use std::env;
-use std::fs;
-use std::path::PathBuf;
-
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn main() {
+    extern crate bindgen;
+    use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+
     println!("cargo::rustc-check-cfg=cfg(register_pointer_values)");
 
     let bindings = bindgen::Builder::default()
